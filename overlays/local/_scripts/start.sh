@@ -46,10 +46,6 @@ until argocd login --core --username admin --password HnGu-igJZeoIPUv8 --insecur
 kubectl config set-context --current --namespace=argocd
 until argocd app sync parent-applications; do echo "awaiting parent-applications to be sync..." && sleep 10; done
 
-# Add hosts
-message ">>> adding hosts to /etc/hosts"
-./install/utilities/add-hosts.sh
-
 message ">>> Applications"
 echo ">>> argo: http://argo-local.mylab.com.br - username: 'admin', password: 'HnGu-igJZeoIPUv8'"
 echo ">>> observability: http://observability-local.mylab.com.br - username: 'admin', password: 'password'"
@@ -64,3 +60,7 @@ echo "NGINX_INGRESS_IP=$NGINX_INGRESS_IP"
 
 message ">>> deploying argo-ingress"
 kubectl apply -f $ARGO_DIR/config/argo-ing.yaml
+
+# Add hosts
+message ">>> adding hosts to /etc/hosts"
+./install/utilities/add-hosts.sh
