@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-tempo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  syncPolicy:
+    syncOptions:
+      - ApplyOutOfSyncOnly=false
+      - PrunePropagationPolicy=background # Supported policies are background, foreground and orphan.
+      - CreateNamespace=true # Namespace Auto-Creation ensures that namespace specified as the application destination exists in the destination cluster.
+
+  source:
+    chart: tempo
+    repoURL: "https://grafana.github.io/helm-charts"
+    targetRevision: 0.15.7
+    helm:
+      # https://github.com/grafana/helm-charts/blob/main/charts/tempo/values.yaml
+      parameters:
+        - name: fullnameOverride
+          value: "tempo"
+
+        - name: tempo.resources.requests.memory
+          value: "512Mi"
+        - name: tempo.resources.limits.memory
+          value: "1.5Gi"
+        - name: tempo.resources.requests.cpu
+          value: "100m"
+        - name: tempo.resources.limits.cpu
+          value: "150m"
+
+        - name: serviceMonitor.enabled
+          value: "true"
+        - name: serviceMonitor.additionalLabels.release
+          value: "observability-kube-prometheus"
+
+        # Note: used by ingestor to save the indexes before flushing it to gcs (https://github.com/grafana/tempo/blob/main/docs/tempo/website/operations/ingester_pvcs.md)
+        - name: persistence.enabled
+          value: "true"
+        - name: persistence.size
+          value: "1Gi"
+
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: observability

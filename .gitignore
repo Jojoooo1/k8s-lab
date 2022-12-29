@@ -1,0 +1,10 @@
+**/.DS_Store
+**/keys/*
+**/*-keyfile.json
+
+**/*secret.json
+
+**/*.key
+**/*key.yaml
+
+.idea

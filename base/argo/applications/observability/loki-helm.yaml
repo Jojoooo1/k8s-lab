@@ -1,0 +1,153 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-loki
+  namespace: argocd
+
+  # By default, deleting an application will not perform a cascade delete, thereby deleting its resources.
+  # You must add the finalizer if you want this behaviour
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  syncPolicy:
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - PrunePropagationPolicy=background # Supported policies are background, foreground and orphan.
+      - CreateNamespace=true # Namespace Auto-Creation ensures that namespace specified as the application destination exists in the destination cluster.
+
+  source:
+    chart: loki
+    repoURL: "https://grafana.github.io/helm-charts"
+    targetRevision: 3.6.0
+    helm:
+      # https://github.com/grafana/helm-charts/blob/main/charts/loki/values.yaml
+      parameters:
+        - name: fullnameOverride
+          value: "loki"
+
+        ## Resources ##
+        ## Write 3 replica (default) ##
+        # Warning: does not change resources order list. Resources are being updated in overlays. It will break kustomize patch.
+        - name: write.resources.requests.memory
+          value: "1Gi"
+        - name: write.resources.limits.memory
+          value: "1Gi"
+        - name: write.resources.requests.cpu
+          value: "400m"
+        - name: write.resources.limits.cpu
+          value: "400m"
+        - name: write.affinity
+          value: ""
+
+        ## Read 3 replica (default) ##
+        - name: read.resources.requests.memory
+          value: "3Gi"
+        - name: read.resources.limits.memory
+          value: "3Gi"
+        - name: read.resources.requests.cpu
+          value: "400m"
+        - name: read.resources.limits.cpu
+          value: "400m"
+        - name: read.affinity
+          value: ""
+        # Warning: does not change resources order list. Resources are being updated in overlays. It will break kustomize patch.
+
+        ## Persistence ##
+        # Note: used by ingestor to save the indexes before flushing it to gcs (https://github.com/grafana/loki/blob/main/docs/sources/operations/storage/boltdb-shipper.md#ingesters)
+        # - name: write.persistence.storageClass
+        #   value: "standard-rwo"
+        # - name: read.persistence.storageClass
+        #   value: "standard-rwo"
+
+        ## Metrics ##
+        - name: monitoring.dashboards.namespace
+          value: "observability"
+        - name: monitoring.dashboards.annotations.k8s-sidecar-target-directory
+          value: "/tmp/dashboards/Loki"
+
+        - name: monitoring.rules.namespace
+          value: "observability"
+        - name: monitoring.rules.labels.release
+          value: "observability-kube-prometheus"
+
+        - name: monitoring.serviceMonitor.namespace
+          value: "observability"
+        - name: monitoring.serviceMonitor.labels.release
+          value: "observability-kube-prometheus"
+
+        - name: loki.auth_enabled
+          value: "false"
+
+
+      values: |-
+        monitoring:
+          dashboards:
+            labels:
+              grafana_dashboard: "1"
+        write:
+          extraEnv:
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /etc/gcp/sa_credentials.json
+
+          extraVolumes:
+            - name: gcp-creds
+              secret:
+                secretName: gcp-creds
+                items:
+                - key: credentials.json
+                  path: sa_credentials.json
+          extraVolumeMounts:
+            - name: gcp-creds
+              mountPath: /etc/gcp
+              readOnly: true
+
+        read:
+          extraEnv:
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /etc/gcp/sa_credentials.json
+
+          extraVolumes:
+            - name: gcp-creds
+              secret:
+                secretName: gcp-creds
+                items:
+                - key: credentials.json
+                  path: sa_credentials.json
+          extraVolumeMounts:
+            - name: gcp-creds
+              mountPath: /etc/gcp
+              readOnly: true
+
+        loki:
+          # https://grafana.com/docs/loki/latest/configuration/
+          server:
+            http_server_read_timeout: 1200s
+            http_server_write_timeout: 1200s
+
+          storage:
+            bucketNames:
+              chunks: chunks
+              ruler: ruler
+              admin: admin
+            type: gcs
+
+            # config: |
+            #   tsdb_shipper:
+            #     active_index_directory: /data/tsdb-index
+            #     cache_location: /data/tsdb-cache
+            #     index_gateway_client:
+            #         server_address: dns:///index-gateway.<namespace>.svc.cluster.local:9095
+            #     query_ready_num_days: 7
+            #     shared_store: gcs
+
+        gateway:
+          nginxConfig:
+            httpSnippet: |
+              proxy_read_timeout 1200;
+              proxy_connect_timeout 1200;
+              proxy_send_timeout 1200;
+
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: observability

@@ -1,0 +1,199 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keycloak
+  namespace: argocd
+
+  # By default, deleting an application will not perform a cascade delete, thereby deleting its resources.
+  # You must add the finalizer if you want this behaviour
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+  syncPolicy:
+    syncOptions:
+      # allows skipping syncing resources that are already in the desired state
+      - ApplyOutOfSyncOnly=false
+      # allows using background deletion during syncing
+      - PrunePropagationPolicy=background
+      # Create namespace at application creation
+      - CreateNamespace=true
+  source:
+    chart: keycloak
+    repoURL: "https://charts.bitnami.com/bitnami"
+    targetRevision: 12.1.5
+    helm:
+      parameters:
+
+        # https://github.com/bitnami/containers/tree/main/bitnami/keycloak
+        # https://github.com/bitnami/containers/issues/10515
+
+        ## Configuration ##
+        - name: extraEnvVars[0].name
+          value: "JAVA_OPTS"
+        
+        # default value in 19.0.3: 
+        # JAVA_OPTS: -Xms64m -Xmx512m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8
+        # JAVA_OPTS_APPEND: -Djgroups.dns.query=keycloak-headless.keycloak.svc.cluster.local
+        - name: extraEnvVars[0].value
+          value: "-XX:MinRAMPercentage=60.0 -XX:MaxRAMPercentage=75.0 -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8"
+
+        ## Replica ##
+        - name: pdb.create
+          value: "true"
+
+        # Metrics
+        - name: metrics.enabled
+          value: "true"
+        - name: metrics.serviceMonitor.enabled
+          value: "true"
+        - name: metrics.serviceMonitor.namespace
+          value: "keycloak"
+        - name: metrics.serviceMonitor.additionalLabels.release # in new version it is called labels
+          value: "observability-kube-prometheus"
+
+        - name: metrics.serviceMonitor.prometheusRule.enabled
+          value: "true"
+        - name: metrics.serviceMonitor.prometheusRule.namespace
+          value: "keycloak"
+        - name: metrics.serviceMonitor.labels.release # in new version it is called labels
+          value: "observability-kube-prometheus"
+        - name: metrics.serviceMonitor.endpoints[0].path
+          value: "/auth/metrics"
+        - name: metrics.serviceMonitor.endpoints[1].path
+          value: "/auth/realms/master/metrics"
+
+        ## Credentials ##
+        - name: auth.adminUser
+          value: "admin"
+        - name: auth.existingSecret
+          value: "keycloak-secrets"
+        - name: extraEnvVarsSecret
+          value: "keycloak-secrets"
+
+        - name: extraDeploy[0]
+          forceString: false # mandatory for being able to use array as name
+          value: |
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: keycloak-secrets
+              namespace: keycloak
+            stringData:
+              admin-password: password              
+              KC_TO_GCP_CREDENTIALS: test
+              KC_TO_GCP_PROJECTID: sandbox-311314
+              KC_TO_GCP_SLACKCHANNEL: alert-sandbox
+              KC_TO_GCP_SLACKUSERNAME: local-keycloak-plugin-events
+              KC_TO_GCP_SLACKWEBHOOKURL: https://hooks.slack.com
+              
+              # KEYCLOAK_EXTRA_ARGS_PREPENDED: --spi-login-protocol-openid-connect-legacy-logout-redirect-uri=true --spi-login-protocol-openid-connect-suppress-logout-confirmation-screen=true
+              
+              
+        ## Database ##
+        - name: postgresql.image.tag
+          value: "13.7.0-debian-11-r33"
+        - name: postgresql.auth.username
+          value: "mylab"
+        - name: postgresql.auth.password
+          value: "password"
+        - name: postgresql.auth.database
+          value: "keycloak"
+        - name: postgresql.auth.postgresPassword
+          value: "password"
+
+        ## Ingress ##
+        # production
+        # proxy=passthrough
+
+        # Networking
+        # - name: proxyAddressForwarding # Warning: Necessary for LB
+        #   value: "true"
+
+        - name: service.type
+          value: "ClusterIP"
+        - name: httpRelativePath
+          value: "/auth/"
+        - name: ingress.enabled
+          value: "true"
+        - name: ingress.path
+          value: "/auth"
+        - name: ingress.pathType
+          value: "Prefix"
+        - name: ingress.ingressClassName
+          value: "nginx"
+        - name: ingress.hostname
+          value: "identity-${ARGOCD_ENV_ENV}.mylab.com.br"
+
+        - name: ingress.tls
+          value: "true"
+        - name: ingress.extraTls[0].secretName
+          value: mylab-keycloak-tls
+        - name: ingress.extraTls[0].hosts[0]
+          value: "identity-${ARGOCD_ENV_ENV}.mylab.com.br"
+
+        - name: initContainers
+          value: |
+            - name: download-mectrics-spi
+              image: alpine:3.15.0
+              command:
+                - sh
+              args:
+                - -c
+                - |
+                  wget https://github.com/aerogear/keycloak-metrics-spi/releases/download/2.5.3/keycloak-metrics-spi-2.5.3.jar -O /providers/keycloak-metrics-spi.jar
+                  chmod +x /providers/keycloak-metrics-spi.jar
+                  touch /providers/keycloak-metrics-spi.jar.dodeploy
+
+              volumeMounts:
+                - name: providers
+                  mountPath: /providers
+
+        - name: extraVolumeMounts
+          value: |
+            - name: providers
+              mountPath: /opt/bitnami/keycloak/providers
+
+        - name: extraVolumes
+          value: |
+            - name: providers
+              emptyDir: {}
+
+      values: |
+        # tls:
+        #   enabled: true
+        #   autoGenerated: true
+        # production: true # https://www.keycloak.org/server/configuration-production
+        # proxy: edge
+        # https://www.keycloak.org/server/hostname
+        # /admin # KC_HOSTNAME_ADMIN, KC_HOSTNAME_ADMIN_URL
+ 
+        ingress:
+          annotations:
+            # cert-manager.io/cluster-issuer: letsencrypt-prod
+            nginx.ingress.kubernetes.io/proxy-buffer-size: "128k" # A common issue with Keycloak and nginx is that the proxy buffer may be too small for what Keycloak is trying to send. This will result in a Bad Gateway (502) error.
+            nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+            nginx.ingress.kubernetes.io/server-snippet: |
+              # # Index
+              # location = "/auth/" {
+              #   deny all;
+              #   return 404;
+              # }
+
+              # # API management (admin/metrics)
+              # location /auth/admin {
+              #   deny all;
+              #   return 403;
+              # }
+              # location /auth/metrics {
+              #     return 403;
+              # }
+              # location ~* /auth/realms/[^/]+/metrics {
+              #     return 403;
+              # }
+
+
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: keycloak

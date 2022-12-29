@@ -1,0 +1,208 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rabbitmq
+  namespace: argocd
+
+  # By default, deleting an application will not perform a cascade delete, thereby deleting its resources.
+  # You must add the finalizer if you want this behaviour
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  syncPolicy:
+    syncOptions:
+      # allows skipping syncing resources that are already in the desired state
+      - ApplyOutOfSyncOnly=true
+      # allows using background deletion during syncing
+      - PrunePropagationPolicy=background
+      # Create namespace at application creation
+      - CreateNamespace=true
+  source:
+    chart: rabbitmq
+    repoURL: "https://charts.bitnami.com/bitnami"
+    targetRevision: 11.3.0
+    helm:
+      parameters:
+        - name: fullnameOverride
+          value: "rabbitmq"
+
+        # Resources
+        - name: resources.requests.memory
+          value: "500Mi"
+        - name: resources.limits.memory
+          value: "1Gi"
+        - name: resources.requests.cpu
+          value: "350m"
+        - name: resources.limits.cpu
+          value: "700m"
+
+        ## Replica ##
+        - name: replicaCount
+          value: "1"
+        - name: pdb.create
+          value: "true"
+        - name: pdb.minAvailable
+          value: "1"
+
+        ## Clustering ##
+        # Note: Running rabbitmq-queues rebalance in subsequent instances won't do anything as they didn't join the quorum yet.
+        # https://github.com/bitnami/charts/issues/10356
+        - name: clustering.rebalance
+          value: "true"
+
+        ## Persistence ##
+        # - name: persistence.storageClass
+        #   value: "standard-rwo"
+        - name: persistence.size
+          value: "1Gi"
+
+        ## Auth ##
+        # Note: password is set via load_definition (this variable is only used to prevent secret creation)
+        - name: auth.existingPasswordSecret # rabbitmq-password
+          value: "rabbitmq-secrets"
+        - name: auth.existingErlangSecret # rabbitmq-erlang-cookie:  /var/lib/rabbitmq/.erlang.cookie and $HOME/.erlang.cookie
+          value: "rabbitmq-secrets"
+
+        ## Configuration ##
+        - name: communityPlugins
+          value: "https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/releases/download/3.10.0/rabbitmq_delayed_message_exchange-3.11.1.ez"
+        - name: extraPlugins
+          value: "rabbitmq_management rabbitmq_shovel rabbitmq_shovel_management rabbitmq_delayed_message_exchange"
+        - name: loadDefinition.enabled
+          value: "true"
+        - name: loadDefinition.existingSecret
+          value: "rabbitmq-load-definition"
+        - name: extraConfiguration
+          value: "load_definitions=/app/load_definition.json"
+
+        ## Metrics ##
+        - name: metrics.enabled
+          value: "true"
+
+        - name: metrics.serviceMonitor.enabled
+          value: "true"
+        - name: metrics.serviceMonitor.namespace
+          value: "rabbitmq"
+        - name: metrics.serviceMonitor.labels.release
+          value: "observability-kube-prometheus"
+
+        - name: metrics.prometheusRule.enabled
+          value: "true"
+        - name: metrics.prometheusRule.namespace
+          value: "rabbitmq"
+        - name: metrics.prometheusRule.additionalLabels.release
+          value: "observability-kube-prometheus"
+
+        - name: extraDeploy[0]
+          value: |
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: rabbitmq-load-definition
+              namespace: rabbitmq
+            data:
+              load_definition.json: ewogICJyYWJiaXRfdmVyc2lvbiI6ICIzLjExLjUiLAogICJyYWJiaXRtcV92ZXJzaW9uIjogIjMuMTEuNSIsCiAgInByb2R1Y3RfbmFtZSI6ICJSYWJiaXRNUSIsCiAgInByb2R1Y3RfdmVyc2lvbiI6ICIzLjExLjUiLAogICJ1c2VycyI6IFsKICAgIHsKICAgICAgIm5hbWUiOiAidXNlciIsCiAgICAgICJwYXNzd29yZF9oYXNoIjogInErNjlkMlhhc1lEL1ZMTVR2Q05NSVE5d1dKSEU2U3k0RWRVbWR6ZGwrR28zcFp0dSIsCiAgICAgICJoYXNoaW5nX2FsZ29yaXRobSI6ICJyYWJiaXRfcGFzc3dvcmRfaGFzaGluZ19zaGEyNTYiLAogICAgICAidGFncyI6IFsKICAgICAgICAiYWRtaW5pc3RyYXRvciIKICAgICAgXSwKICAgICAgImxpbWl0cyI6IHt9CiAgICB9CiAgXSwKICAidmhvc3RzIjogWwogICAgewogICAgICAibmFtZSI6ICIvIgogICAgfQogIF0sCiAgInBlcm1pc3Npb25zIjogWwogICAgewogICAgICAidXNlciI6ICJ1c2VyIiwKICAgICAgInZob3N0IjogIi8iLAogICAgICAiY29uZmlndXJlIjogIi4qIiwKICAgICAgIndyaXRlIjogIi4qIiwKICAgICAgInJlYWQiOiAiLioiCiAgICB9CiAgXSwKICAidG9waWNfcGVybWlzc2lvbnMiOiBbXSwKICAicGFyYW1ldGVycyI6IFtdLAogICJnbG9iYWxfcGFyYW1ldGVycyI6IFsKICAgIHsKICAgICAgIm5hbWUiOiAiaW50ZXJuYWxfY2x1c3Rlcl9pZCIsCiAgICAgICJ2YWx1ZSI6ICJyYWJiaXRtcS1jbHVzdGVyLWlkLTdSSzRBUW0yNmEydERFMk5GaDJ6ZHciCiAgICB9CiAgXSwKICAicG9saWNpZXMiOiBbXSwKICAicXVldWVzIjogWwogICAgewogICAgICAibmFtZSI6ICJ3ZWJob29rX3F1ZXVlIiwKICAgICAgInZob3N0IjogIi8iLAogICAgICAiZHVyYWJsZSI6IHRydWUsCiAgICAgICJhdXRvX2RlbGV0ZSI6IGZhbHNlLAogICAgICAiYXJndW1lbnRzIjogewogICAgICAgICJ4LW1heC1sZW5ndGgiOiAxMDAwMDAsCiAgICAgICAgIngtb3ZlcmZsb3ciOiAicmVqZWN0LXB1Ymxpc2giLAogICAgICAgICJ4LXF1ZXVlLXR5cGUiOiAicXVvcnVtIgogICAgICB9CiAgICB9CiAgXSwKICAiZXhjaGFuZ2VzIjogWwogICAgewogICAgICAibmFtZSI6ICJ3ZWJob29rIiwKICAgICAgInZob3N0IjogIi8iLAogICAgICAidHlwZSI6ICJ4LWRlbGF5ZWQtbWVzc2FnZSIsCiAgICAgICJkdXJhYmxlIjogdHJ1ZSwKICAgICAgImF1dG9fZGVsZXRlIjogZmFsc2UsCiAgICAgICJpbnRlcm5hbCI6IGZhbHNlLAogICAgICAiYXJndW1lbnRzIjogewogICAgICAgICJ4LWRlbGF5ZWQtdHlwZSI6ICJkaXJlY3QiCiAgICAgIH0KICAgIH0KICBdLAogICJiaW5kaW5ncyI6IFsKICAgIHsKICAgICAgInNvdXJjZSI6ICJ3ZWJob29rIiwKICAgICAgInZob3N0IjogIi8iLAogICAgICAiZGVzdGluYXRpb24iOiAid2ViaG9va19xdWV1ZSIsCiAgICAgICJkZXN0aW5hdGlvbl90eXBlIjogInF1ZXVlIiwKICAgICAgInJvdXRpbmdfa2V5IjogIndlYmhvb2tfZXh0ZXJuYWxfYXBpIiwKICAgICAgImFyZ3VtZW50cyI6IHt9CiAgICB9CiAgXQp9
+
+        - name: extraDeploy[1]
+          value: |
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: rabbitmq-secrets
+              namespace: rabbitmq
+            data:
+              rabbitmq-password: bnVsbA== # null (defined in load_definition)
+              rabbitmq-erlang-cookie: YkNGQmU5SG1iNHFpMlNXbA== # bCFBe9Hmb4qi2SWl
+
+      values: |-
+        metrics:
+          prometheusRule:
+            rules:
+            
+              - alert: RabbitmqNodeDown
+                expr: sum(rabbitmq_build_info) < 3
+                for: 0m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: "Rabbitmq node down"
+                  description: "Less than 3 nodes running in RabbitMQ cluster"
+              
+              - alert: RabbitmqNodeNotDistributed
+                expr: erlang_vm_dist_node_state < 3
+                for: 0m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: Rabbitmq node not distributed
+                  description: "Distribution link state is not 'up'"
+
+              - alert: RabbitmqInstancesDifferentVersions
+                expr: count(count(rabbitmq_build_info) by (rabbitmq_version)) > 1
+                for: 1h
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Rabbitmq instances different versions
+                  description: "Running different version of Rabbitmq in the same cluster, can lead to failure."
+
+              - alert: RabbitmqMemoryHigh
+                expr: rabbitmq_process_resident_memory_bytes / rabbitmq_resident_memory_limit_bytes * 100 > 90
+                for: 2m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Rabbitmq memory high
+                  description: "A node use more than 90% of allocated RAM"
+
+              - alert: RabbitmqFileDescriptorsUsage
+                expr: rabbitmq_process_open_fds / rabbitmq_process_max_fds * 100 > 90
+                for: 2m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Rabbitmq file descriptors usage
+                  description: "A node use more than 90% of file descriptors"
+
+              - alert: RabbitmqTooManyUnackMessages
+                expr: sum(rabbitmq_queue_messages_unacked) BY (queue) > 1000
+                for: 1m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Rabbitmq too many unack messages
+                  description: "Too many unacknowledged messages"
+
+              - alert: RabbitmqTooManyConnections
+                expr: rabbitmq_connections > 1000
+                for: 2m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Rabbitmq too many connections
+                  description: "The total connections of a node is too high"
+
+              - alert: RabbitmqNoQueueConsumer
+                expr: rabbitmq_queue_consumers < 1
+                for: 1m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Rabbitmq no queue consumer
+                  description: "A queue has less than 1 consumer"
+              
+              - alert: RabbitmqUnroutableMessages
+                expr: increase(rabbitmq_channel_messages_unroutable_returned_total[1m]) > 0 or increase(rabbitmq_channel_messages_unroutable_dropped_total[1m]) > 0
+                for: 2m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Rabbitmq unroutable messages
+                  description: "A queue has unroutable messages"
+
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: rabbitmq
+
+

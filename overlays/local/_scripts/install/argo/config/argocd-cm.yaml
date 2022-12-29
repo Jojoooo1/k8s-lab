@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  kustomize.buildOptions: --load-restrictor LoadRestrictionsNone # allow to load resource above root folder
+  configManagementPlugins: |
+    - name: envsubst
+      init:
+        command: ["sh", "-c"]
+        args: ["kustomize build . --load-restrictor LoadRestrictionsNone -o raw-kustomization.yaml"]                   
+      generate:
+        command:
+          - /bin/sh
+          - -c
+          - |
+            envsubst < raw-kustomization.yaml > processed-kustomization.yaml && cp processed-kustomization.yaml /dev/stdout

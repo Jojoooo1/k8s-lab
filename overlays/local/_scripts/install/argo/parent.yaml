@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parent-applications
+  namespace: argocd
+
+  # Add cascade delete behaviour (deletes both the app and its resources, rather than only the app.)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  # The project the application belongs to.
+  project: default
+
+  syncPolicy:
+    automated:
+      # prune: true # Specifies if resources should be pruned during auto-syncing ( false by default ).
+      selfHeal: true # Childs application are automatically refresh
+      # allowEmpty: false # Allows deleting all application resources during automatic syncing ( false by default ).
+    syncOptions:
+      - PrunePropagationPolicy=background # Supported policies are background, foreground and orphan.
+      - ApplyOutOfSyncOnly=true # allows skipping syncing resources that are already in the desired state
+
+  # Source of the application manifests
+  source:
+    repoURL: git@github.com:Jojoooo1/k8s-lab.git
+    targetRevision: main
+    path: overlays/local/argo
+    plugin:
+      name: envsubst
+      env:
+        - name: DNS
+          value: "-local" # value: "${ARGOCD_ENV_DNS=''}"
+
+        - name: ENV
+          value: "local"
+
+        - name: PROJECT
+          value: "sandbox"
+
+  # Destination cluster and namespace to deploy the application
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd

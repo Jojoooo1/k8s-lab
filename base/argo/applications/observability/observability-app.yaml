@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  syncPolicy:
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - PrunePropagationPolicy=background # Supported policies are background, foreground and orphan.
+      - CreateNamespace=true # Namespace Auto-Creation ensures that namespace specified as the application destination exists in the destination cluster.
+  source:
+    repoURL: git@github.com:Jojoooo1/k8s-lab.git
+    targetRevision: main
+    path: overlays/${ARGOCD_ENV_ENV}/applications/observability
+    # Note: envsubst envs are injected through parent app via helm chart in tf.
+    plugin:
+      name: envsubst
+      env:
+        - name: DNS
+          value: "${ARGOCD_ENV_DNS=''}"
+
+        - name: ENV
+          value: "${ARGOCD_ENV_ENV}"
+
+        - name: PROJECT
+          value: "${ARGOCD_ENV_PROJECT}"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability

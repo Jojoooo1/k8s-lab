@@ -1,0 +1,104 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-promtail
+  namespace: argocd
+
+  # By default, deleting an application will not perform a cascade delete, thereby deleting its resources.
+  # You must add the finalizer if you want this behaviour
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  syncPolicy:
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - PrunePropagationPolicy=background # Supported policies are background, foreground and orphan.
+      - CreateNamespace=true # Namespace Auto-Creation ensures that namespace specified as the application destination exists in the destination cluster.
+
+  source:
+    chart: promtail
+    repoURL: "https://grafana.github.io/helm-charts"
+    targetRevision: 6.7.2
+    helm:
+      # https://github.com/grafana/helm-charts/blob/main/charts/promtail/values.yaml
+      parameters:
+        - name: fullnameOverride
+          value: "promtail"
+
+        - name: config.lokiAddress
+          value: "http://loki-gateway/loki/api/v1/push"
+
+        - name: resources.requests.memory
+          value: "64Mi"
+        - name: resources.limits.memory
+          value: "128Mi"
+        - name: resources.requests.cpu
+          value: "30m"
+        - name: resources.limits.cpu
+          value: "60m"
+
+        - name: serviceMonitor.enabled
+          value: "true"
+        - name: serviceMonitor.labels.release
+          value: "observability-kube-prometheus"
+
+      values: |-
+        config:
+          # We only add a filter based on annotation to only scrap pod with annotation 
+          snippets:
+            scrapeConfigs: |
+              - job_name: kubernetes-pods
+                pipeline_stages:                        
+                  {{- toYaml .Values.config.snippets.pipelineStages | nindent 4 }}
+                kubernetes_sd_configs:
+                  - role: pod
+                relabel_configs:
+
+                  # Note: added to only scrap pod with annotation loki.io/scrape: 'true'
+                  - source_labels: [__meta_kubernetes_pod_annotation_loki_io_scrape]
+                    action: keep
+                    regex: true
+
+                  # DEFAULT VALUE
+                  - source_labels:
+                    - __meta_kubernetes_pod_controller_name
+                    regex: ([0-9a-z-.]+?)(-[0-9a-f]{8,10})?
+                    action: replace
+                    target_label: __tmp_controller_name
+
+                  - source_labels:
+                      - __meta_kubernetes_pod_label_app_kubernetes_io_name
+                      - __meta_kubernetes_pod_label_app
+                      - __tmp_controller_name
+                      - __meta_kubernetes_pod_name
+                    regex: ^;*([^;]+)(;.*)?$
+                    action: replace
+                    target_label: app
+
+                  - source_labels:
+                      - __meta_kubernetes_pod_label_app_kubernetes_io_instance
+                      - __meta_kubernetes_pod_label_release
+                    regex: ^;*([^;]+)(;.*)?$
+                    action: replace
+                    target_label: instance
+
+                  - source_labels:
+                      - __meta_kubernetes_pod_label_app_kubernetes_io_component
+                      - __meta_kubernetes_pod_label_component
+                    regex: ^;*([^;]+)(;.*)?$
+                    action: replace
+                    target_label: component
+                  {{- if .Values.config.snippets.addScrapeJobLabel }}
+
+                  - replacement: kubernetes-pods
+                    target_label: scrape_job
+                  {{- end }}
+                  {{- toYaml .Values.config.snippets.common | nindent 4 }}
+                  {{- with .Values.config.snippets.extraRelabelConfigs }}
+                  {{- toYaml . | nindent 4 }}
+                  {{- end }}
+
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: observability

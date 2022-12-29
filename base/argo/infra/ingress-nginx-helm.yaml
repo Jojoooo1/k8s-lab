@@ -1,0 +1,115 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx
+  namespace: argocd
+
+  # By default, deleting an application will not perform a cascade delete, thereby deleting its resources.
+  # You must add the finalizer if you want this behaviour
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  syncPolicy:
+    syncOptions:
+      # allows skipping syncing resources that are already in the desired state
+      - ApplyOutOfSyncOnly=true
+      # allows using background deletion during syncing
+      - PrunePropagationPolicy=background
+      # Create namespace at application creation
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true
+
+  source:
+    chart: ingress-nginx
+    repoURL: "https://kubernetes.github.io/ingress-nginx"
+    targetRevision: 4.2.0
+    # https://github.com/kubernetes/ingress-nginx/blob/main/charts/ingress-nginx/values.yaml
+    helm:
+      parameters:
+
+        - name: controller.resources.requests.cpu
+          value: "100m"
+        - name: controller.resources.limits.cpu
+          value: "100m"
+        - name: controller.resources.requests.memory
+          value: "180Mi"
+        - name: controller.resources.limits.memory
+          value: "180Mi"
+
+        - name: controller.extraArgs.enable-ssl-passthrough
+          value: "true"
+
+        # Monitoring
+        # - name: controller.metrics.enabled
+        #   value: "true"
+        # - name: controller.metrics.serviceMonitor.enabled
+        #   value: "true"
+        # - name: controller.metrics.serviceMonitor.namespace
+        #   value: "observability"
+        # - name: controller.metrics.serviceMonitor.namespaceSelector.matchNames[0]
+        #   value: "ingress-nginx"
+        # - name: controller.metrics.serviceMonitor.additionalLabels.release # mandatory for prometheus stack to discover this serviceMonitor.
+        #   value: "observability-kube-prometheus"
+
+        # Alerting
+        # - name: controller.metrics.prometheusRule.enabled
+        #   value: "true"
+        # - name: controller.metrics.prometheusRule.namespace
+        #   value: "observability"
+        # - name: controller.metrics.prometheusRule.additionalLabels.release # mandatory for prometheus stack to discover this serviceMonitor.
+        #   value: "observability-kube-prometheus"
+
+      # values: |
+      #   controller:
+      #     metrics:
+      #       # https://awesome-prometheus-alerts.grep.to/rules#nginx
+      #       prometheusRule:
+      #         # sum avg, max, min function that you use; it gathered all the time series present and added them groping BY (instance, name)
+      #         rules: 
+      #           - alert: NginxHighHttp4xxErrorRate
+      #             expr: sum by(ingress, exported_service) (rate(nginx_ingress_controller_requests{status=~"^4.."}[1m])) / sum by(ingress, exported_service) (rate(nginx_ingress_controller_requests[1m])) * 100 > 5
+      #             # for: 1m
+      #             for: 10s
+      #             labels:
+      #               severity: critical
+      #             annotations:
+      #               summary: "Nginx high HTTP 4xx error rate"
+      #               description: "Too many HTTP requests with status 4xx (> 5%)"
+      #               # runbook_url: ""
+
+      #           - alert: NginxHighHttp5xxErrorRate
+      #             expr: sum by(ingress, exported_service) (rate(nginx_ingress_controller_requests{status=~"^5.."}[1m])) / sum by(ingress, exported_service) (rate(nginx_ingress_controller_requests[1m])) * 100 > 5
+      #             for: 1m
+      #             labels:
+      #               severity: critical
+      #             annotations:
+      #               summary: "Nginx high HTTP 5xx error rate"
+      #               description: "Too many HTTP requests with status 5xx (> 5%)"
+      #               # runbook_url: ""
+
+      #           - alert: NginxLatencyHigh
+      #             expr: histogram_quantile(0.99, sum(rate(nginx_ingress_controller_request_duration_seconds_bucket[2m])) by (host, instance)) > 3
+      #             for: 2m
+      #             labels:
+      #               severity: warning
+      #             annotations:
+      #               summary: "Nginx latency high"
+      #               description: "Nginx p99 latency is higher than 3 seconds"
+      #               # runbook_url: ""
+
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: ingress-nginx
+
+  ignoreDifferences:
+    - kind: Service
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
+      jsonPointers:
+        - /spec/ipFamilies
+        - /spec/ipFamilyPolicy
